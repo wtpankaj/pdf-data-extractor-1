@@ -1,59 +1,58 @@
 import streamlit as st
-import pdfplumber
+import fitz  # PyMuPDF
 import re
 import pandas as pd
 
-def extract_invoice_data(pdf_file):
-    with pdfplumber.open(pdf_file) as pdf:
-        # Extract text from the first page
-        page = pdf.pages[0]
-        text = page.extract_text()
-        
-    data = {}
+def extract_details(pdf_bytes):
+    # Open the PDF from memory
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
 
     # 1. Extract Order ID
-    # Patterns: OD followed by digits [cite: 2, 29]
-    order_id_match = re.search(r"Order Id:\s*(OD\d+)", text)
-    data['Order ID'] = order_id_match.group(1) if order_id_match else "Not Found"
+    order_id_match = re.search(r"Order Id:\s*(\w+)", text)
+    order_id = order_id_match.group(1) if order_id_match else "Not Found"
 
-    # 2. Extract Seller Registered Address (Name Only)
-    # Extracts specifically "R K Enterprises" [cite: 27, 32]
-    seller_match = re.search(r"Seller Registered Address:\s*([^.]+)", text)
-    data['Seller'] = seller_match.group(1).strip() if seller_match else "Not Found"
+    # 2. Extract Seller Registered Address (First line only)
+    # Searches for the line starting with 'Seller Registered Address:'
+    seller_match = re.search(r"Seller Registered Address:\s*([^.\n]+)", text)
+    seller = seller_match.group(1).strip() if seller_match else "Not Found"
 
     # 3. Extract Shipping Address
-    # Captures everything between 'Shipping ADDRESS' and the start of the product table [cite: 17-23]
-    shipping_pattern = re.compile(r"Shipping ADDRESS\s*(.*?)(?=Product|Description)", re.DOTALL)
-    shipping_match = shipping_pattern.search(text)
-    if shipping_match:
-        address = shipping_match.group(1).replace('\n', ' ').strip()
-        data['Shipping Address'] = address
-    else:
-        data['Shipping Address'] = "Not Found"
+    # Captures everything between 'Shipping ADDRESS' and the table start (Product)
+    ship_match = re.search(r"Shipping ADDRESS\s*(.*?)\s*(?=Product|The following table)", text, re.DOTALL)
+    shipping_address = ship_address = ship_match.group(1).replace('\n', ' ').strip() if ship_match else "Not Found"
 
-    # 4. Extract Product SKU (Data between two '|')
-    # Specifically looking for the pattern | SKU | 
-    sku_match = re.search(r"\|\s*([^|]+)\s*\|", text)
-    data['Product SKU'] = sku_match.group(1).strip() if sku_match else "Not Found"
+    # 4. Extract Product SKU
+    # Targeted logic: find text between the 2nd and 3rd '|' symbols
+    sku = "Not Found"
+    sku_match = re.search(r"\|\s*([^|]+)\s*\|\s*10 day", text)
+    if sku_match:
+        sku = sku_match.group(1).strip()
 
-    return data
+    return {
+        "Order Id": order_id,
+        "Seller Registered Address": seller,
+        "Shipping Address": shipping_address,
+        "Product SKU": sku
+    }
 
-# Streamlit UI
-st.title("Invoice Data Extractor")
-st.write("Upload your formatted PDFs to extract specific details.")
+st.set_page_config(page_title="Invoice Extractor", layout="wide")
+st.title("📄 Invoice Data Extraction")
 
-uploaded_files = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Invoice PDFs", type="pdf", accept_multiple_files=True)
 
 if uploaded_files:
-    results = []
+    data_list = []
     for uploaded_file in uploaded_files:
-        extracted = extract_invoice_data(uploaded_file)
-        results.append(extracted)
+        details = extract_details(uploaded_file.read())
+        data_list.append(details)
     
-    # Display results in a table without the filename column
-    df = pd.DataFrame(results)
+    # Display the result in a table
+    df = pd.DataFrame(data_list)
     st.table(df)
-
-    # Option to download the results as CSV
+    
+    # Option to download results
     csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download Data as CSV", csv, "extracted_invoices.csv", "text/csv")
+    st.download_button("Download CSV", csv, "extracted_invoices.csv", "text/csv")
