@@ -4,32 +4,50 @@ import re
 import pandas as pd
 
 def extract_details(pdf_bytes):
-    # Open the PDF from memory
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     text = ""
     for page in doc:
         text += page.get_text()
 
-    # 1. Extract Order ID
+    # 1. Order ID
+    # Captures the alphanumeric string immediately following "Order Id:"
     order_id_match = re.search(r"Order Id:\s*(\w+)", text)
     order_id = order_id_match.group(1) if order_id_match else "Not Found"
 
-    # 2. Extract Seller Registered Address (First line only)
-    # Searches for the line starting with 'Seller Registered Address:'
-    seller_match = re.search(r"Seller Registered Address:\s*([^.\n]+)", text)
+    # 2. Seller Registered Address
+    # Captures text starting after "Address:" until the first comma, period, or newline
+    seller_match = re.search(r"Seller Registered Address:\s*([^,.\n\r]+)", text)
     seller = seller_match.group(1).strip() if seller_match else "Not Found"
 
-    # 3. Extract Shipping Address
-    # Captures everything between 'Shipping ADDRESS' and the table start (Product)
-    ship_match = re.search(r"Shipping ADDRESS\s*(.*?)\s*(?=Product|The following table)", text, re.DOTALL)
-    shipping_address = ship_address = ship_match.group(1).replace('\n', ' ').strip() if ship_match else "Not Found"
+    # 3. Product SKU
+    # Captures the text strictly between the last pipe "|" and "10 day"
+    sku_match = re.search(r"\|\s*([^|]+?)\s*\|\s*10 day", text)
+    sku = sku_match.group(1).strip() if sku_match else "Not Found"
 
-    # 4. Extract Product SKU
-    # Targeted logic: find text between the 2nd and 3rd '|' symbols
-    sku = "Not Found"
-    sku_match = re.search(r"\|\s*([^|]+)\s*\|\s*10 day", text)
-    if sku_match:
-        sku = sku_match.group(1).strip()
+    # 4. Shipping Address
+    # Captures text starting from "Shipping ADDRESS" until it hits any footer keywords
+    # The lookahead (?=...) ensures we stop BEFORE these keywords appear
+    ship_match = re.search(
+        r"Shipping ADDRESS\s*([\s\S]*?)(?=\s*(?:The following table|Product|Seller Registered Address|FSSAI|Billing Address))", 
+        text, 
+        re.IGNORECASE
+    )
+    
+    shipping_address = "Not Found"
+    if ship_match:
+        # Clean the extracted block
+        raw_address = ship_match.group(1)
+        # Final safety filter: Explicitly cut off if keywords managed to sneak in
+        if "FSSAI" in raw_address:
+            raw_address = raw_address.split("FSSAI")[0]
+        if "Seller Registered Address" in raw_address:
+            raw_address = raw_address.split("Seller Registered Address")[0]
+            
+        # Remove Order ID if it leaked into the address block
+        raw_address = re.sub(r"Order Id:.*", "", raw_address)
+        
+        # Normalize whitespace (replace newlines with spaces)
+        shipping_address = " ".join(raw_address.split())
 
     return {
         "Order Id": order_id,
@@ -49,10 +67,5 @@ if uploaded_files:
         details = extract_details(uploaded_file.read())
         data_list.append(details)
     
-    # Display the result in a table
     df = pd.DataFrame(data_list)
     st.table(df)
-    
-    # Option to download results
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download CSV", csv, "extracted_invoices.csv", "text/csv")
