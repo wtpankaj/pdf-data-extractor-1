@@ -18,7 +18,7 @@ def extract_details(pdf_bytes):
     seller_match = re.search(r"Seller Registered Address:\s*([^,.\n\r]+)", text)
     seller = seller_match.group(1).strip() if seller_match else "Not Found"
 
-    # 3. Product SKU (Handles both "10 day" and "IMEI" formats)
+    # 3. Product SKU
     sku = "Not Found"
     sku_match_1 = re.search(r"\|\s*([^|]+?)\s*\|\s*10 day", text)
     sku_match_2 = re.search(r"([A-Z0-9-]+)\s*\|\s*IMEI", text)
@@ -47,10 +47,12 @@ def extract_details(pdf_bytes):
         raw_address = re.sub(r"Order Id:.*", "", raw_address)
         shipping_address = " ".join(raw_address.split())
 
+    # Return with specific column order
     return {
-        "Order Id": order_id,
-        "Seller Registered Address": seller,
         "Shipping Address": shipping_address,
+        "Order Id": order_id,
+        " ": "",  # Blank Column
+        "Seller Registered Address": seller,
         "Product SKU": sku
     }
 
@@ -65,9 +67,13 @@ if uploaded_files:
         details = extract_details(uploaded_file.read())
         data_list.append(details)
     
+    # Create DataFrame
     df = pd.DataFrame(data_list)
+    
+    # Show Table
     st.table(df)
 
+    # Excel Download
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
